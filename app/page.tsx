@@ -5,12 +5,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { PlusCircle, Wallet, Target, TrendingUp, AlertTriangle, Trophy } from "lucide-react"
+import { PlusCircle, Wallet, Target, TrendingUp, AlertTriangle, Trophy, Settings } from "lucide-react"
 import AddTransactionDialog from "@/components/add-transaction-dialog"
 import ExpenseList from "@/components/expense-list"
 import SavingsChallenge from "@/components/savings-challenge"
 import FinancialTips from "@/components/financial-tips"
 import BudgetOverview from "@/components/budget-overview"
+import AuthDialog from "@/components/auth-dialog"
+import BudgetSettingsDialog from "@/components/budget-settings-dialog"
+import UserProfile from "@/components/user-profile"
+
+interface User {
+  id: string
+  name: string
+  email: string
+  monthlyBudget: number
+  savingsGoal: number
+  createdAt: string
+}
 
 interface Transaction {
   id: string
@@ -20,6 +32,7 @@ interface Transaction {
   amount: number
   paymentMethod: "cash" | "upi"
   notes?: string
+  userId: string
 }
 
 interface BudgetData {
@@ -29,11 +42,15 @@ interface BudgetData {
   dailyBudget: number
   savingsGoal: number
   currentSavings: number
+  monthlyBudget: number
 }
 
 export default function MoneyMentor() {
+  const [user, setUser] = useState<User | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [isBudgetSettingsOpen, setIsBudgetSettingsOpen] = useState(false)
   const [budgetData, setBudgetData] = useState<BudgetData>({
     totalIncome: 0,
     totalExpenses: 0,
@@ -41,12 +58,22 @@ export default function MoneyMentor() {
     dailyBudget: 0,
     savingsGoal: 5000,
     currentSavings: 0,
+    monthlyBudget: 10000,
   })
 
-  // Load data from localStorage on component mount
+  // Load user data from localStorage on component mount
   useEffect(() => {
-    const savedTransactions = localStorage.getItem("moneymentor-transactions")
-    const savedBudgetData = localStorage.getItem("moneymentor-budget")
+    const savedUser = localStorage.getItem("moneymentor-user")
+    if (savedUser) {
+      const userData = JSON.parse(savedUser)
+      setUser(userData)
+      loadUserData(userData.id)
+    }
+  }, [])
+
+  const loadUserData = (userId: string) => {
+    const savedTransactions = localStorage.getItem(`moneymentor-transactions-${userId}`)
+    const savedBudgetData = localStorage.getItem(`moneymentor-budget-${userId}`)
 
     if (savedTransactions) {
       setTransactions(JSON.parse(savedTransactions))
@@ -55,50 +82,135 @@ export default function MoneyMentor() {
     if (savedBudgetData) {
       setBudgetData(JSON.parse(savedBudgetData))
     }
-  }, [])
+  }
 
-  // Calculate budget data whenever transactions change
+  // Calculate budget data whenever transactions or user changes
   useEffect(() => {
+    if (!user) return
+
     const totalIncome = transactions.filter((t) => t.type === "income").reduce((sum, t) => sum + t.amount, 0)
-
     const totalExpenses = transactions.filter((t) => t.type === "expense").reduce((sum, t) => sum + t.amount, 0)
-
-    const remainingBudget = totalIncome - totalExpenses
+    const remainingBudget = user.monthlyBudget - totalExpenses
     const dailyBudget = remainingBudget > 0 ? remainingBudget / 30 : 0
-    const currentSavings = Math.max(0, remainingBudget)
+    const currentSavings = Math.max(0, totalIncome - totalExpenses)
 
     const newBudgetData = {
-      ...budgetData,
       totalIncome,
       totalExpenses,
       remainingBudget,
       dailyBudget,
       currentSavings,
+      savingsGoal: user.savingsGoal,
+      monthlyBudget: user.monthlyBudget,
     }
 
     setBudgetData(newBudgetData)
-    localStorage.setItem("moneymentor-budget", JSON.stringify(newBudgetData))
-  }, [transactions])
+    localStorage.setItem(`moneymentor-budget-${user.id}`, JSON.stringify(newBudgetData))
+  }, [transactions, user])
 
   // Save transactions to localStorage
   useEffect(() => {
-    localStorage.setItem("moneymentor-transactions", JSON.stringify(transactions))
-  }, [transactions])
+    if (user) {
+      localStorage.setItem(`moneymentor-transactions-${user.id}`, JSON.stringify(transactions))
+    }
+  }, [transactions, user])
 
-  const addTransaction = (transaction: Omit<Transaction, "id">) => {
+  const handleLogin = (userData: Omit<User, "id" | "createdAt">) => {
+    const newUser: User = {
+      ...userData,
+      id: Date.now().toString(),
+      createdAt: new Date().toISOString(),
+    }
+    setUser(newUser)
+    localStorage.setItem("moneymentor-user", JSON.stringify(newUser))
+    loadUserData(newUser.id)
+  }
+
+  const handleLogout = () => {
+    setUser(null)
+    setTransactions([])
+    setBudgetData({
+      totalIncome: 0,
+      totalExpenses: 0,
+      remainingBudget: 0,
+      dailyBudget: 0,
+      savingsGoal: 5000,
+      currentSavings: 0,
+      monthlyBudget: 10000,
+    })
+    localStorage.removeItem("moneymentor-user")
+  }
+
+  const addTransaction = (transaction: Omit<Transaction, "id" | "userId">) => {
+    if (!user) return
+
     const newTransaction = {
       ...transaction,
       id: Date.now().toString(),
+      userId: user.id,
     }
     setTransactions((prev) => [newTransaction, ...prev])
   }
 
+  const updateBudgetSettings = (monthlyBudget: number, savingsGoal: number) => {
+    if (!user) return
+
+    const updatedUser = {
+      ...user,
+      monthlyBudget,
+      savingsGoal,
+    }
+    setUser(updatedUser)
+    localStorage.setItem("moneymentor-user", JSON.stringify(updatedUser))
+  }
+
   const getBudgetStatus = () => {
-    const spentPercentage = budgetData.totalIncome > 0 ? (budgetData.totalExpenses / budgetData.totalIncome) * 100 : 0
+    const spentPercentage =
+      budgetData.monthlyBudget > 0 ? (budgetData.totalExpenses / budgetData.monthlyBudget) * 100 : 0
 
     if (spentPercentage >= 90) return { status: "danger", message: "Budget Exceeded!" }
     if (spentPercentage >= 80) return { status: "warning", message: "Budget Alert!" }
     return { status: "good", message: "On Track" }
+  }
+
+  // Show auth dialog if user is not logged in
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center">
+        <div className="text-center space-y-8 p-8">
+          <div>
+            <h1 className="text-6xl font-bold text-gray-900 mb-4">💰 MoneyMentor</h1>
+            <p className="text-xl text-gray-600 mb-8">Smart Personal Finance for Students</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="p-6 bg-white rounded-lg shadow-md">
+                <div className="text-4xl mb-4">📊</div>
+                <h3 className="font-semibold mb-2">Track Expenses</h3>
+                <p className="text-sm text-gray-600">Monitor every rupee you spend</p>
+              </div>
+              <div className="p-6 bg-white rounded-lg shadow-md">
+                <div className="text-4xl mb-4">🎯</div>
+                <h3 className="font-semibold mb-2">Set Goals</h3>
+                <p className="text-sm text-gray-600">Achieve your savings targets</p>
+              </div>
+              <div className="p-6 bg-white rounded-lg shadow-md">
+                <div className="text-4xl mb-4">📚</div>
+                <h3 className="font-semibold mb-2">Learn Finance</h3>
+                <p className="text-sm text-gray-600">Build smart money habits</p>
+              </div>
+            </div>
+          </div>
+          <Button
+            onClick={() => setIsAuthDialogOpen(true)}
+            size="lg"
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 rounded-full shadow-lg text-lg"
+          >
+            Get Started - It's Free!
+          </Button>
+        </div>
+
+        <AuthDialog isOpen={isAuthDialogOpen} onClose={() => setIsAuthDialogOpen(false)} onLogin={handleLogin} />
+      </div>
+    )
   }
 
   const budgetStatus = getBudgetStatus()
@@ -106,10 +218,19 @@ export default function MoneyMentor() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
       <div className="container mx-auto p-4 max-w-6xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">💰 MoneyMentor</h1>
-          <p className="text-lg text-gray-600">Smart Personal Finance for Students</p>
+        {/* Header with User Profile */}
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">💰 MoneyMentor</h1>
+            <p className="text-lg text-gray-600">Welcome back, {user.name}!</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" onClick={() => setIsBudgetSettingsOpen(true)} className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Budget Settings
+            </Button>
+            <UserProfile user={user} onLogout={handleLogout} />
+          </div>
         </div>
 
         {/* Budget Status Alert */}
@@ -121,7 +242,7 @@ export default function MoneyMentor() {
                 <span className="font-semibold text-orange-800">{budgetStatus.message}</span>
                 <span className="text-orange-700">
                   You've spent ₹{budgetData.totalExpenses.toLocaleString("en-IN")} out of ₹
-                  {budgetData.totalIncome.toLocaleString("en-IN")}
+                  {budgetData.monthlyBudget.toLocaleString("en-IN")} monthly budget
                 </span>
               </div>
             </CardContent>
@@ -134,8 +255,8 @@ export default function MoneyMentor() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-green-100">Total Income</p>
-                  <p className="text-2xl font-bold">₹{budgetData.totalIncome.toLocaleString("en-IN")}</p>
+                  <p className="text-green-100">Monthly Budget</p>
+                  <p className="text-2xl font-bold">₹{budgetData.monthlyBudget.toLocaleString("en-IN")}</p>
                 </div>
                 <Wallet className="h-8 w-8 text-green-200" />
               </div>
@@ -257,11 +378,19 @@ export default function MoneyMentor() {
           </TabsContent>
         </Tabs>
 
-        {/* Add Transaction Dialog */}
+        {/* Dialogs */}
         <AddTransactionDialog
           isOpen={isAddDialogOpen}
           onClose={() => setIsAddDialogOpen(false)}
           onAddTransaction={addTransaction}
+        />
+
+        <BudgetSettingsDialog
+          isOpen={isBudgetSettingsOpen}
+          onClose={() => setIsBudgetSettingsOpen(false)}
+          currentBudget={user.monthlyBudget}
+          currentSavingsGoal={user.savingsGoal}
+          onUpdate={updateBudgetSettings}
         />
       </div>
     </div>
